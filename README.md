@@ -1,11 +1,21 @@
 # bakatcp.github.io
-## Robot Sumo Arduino
-- Sensor Ultrasonik
-- Motor Driver L298N
-- Arduino Uno
-- Bahasa C++
-- 
-👋 Halo, saya Bakat Cp
-🎓 Siswa SMK SMTI Yogyakarta - Mekatronika  
-⚙️ Minat: Otomasi, Robotik, Industri 4.0  
-📌 Skill: Arduino, C++, Sensor, Desain Grafis
+# 👋 Hi, I'm Bakat
+
+🎓 Mechatronics Engineering Student | SMK SMTI Yogyakarta  
+⚙️ Automation • Robotics • Arduino • C++  
+
+## 🔧 Skills
+- Arduino & Embedded System
+- Sensor & Actuator
+- C++ Programming
+- Basic PLC
+- Industrial Automation
+
+## 📂 Featured Projects
+- 🤖 Sumo Robot (Arduino)
+- 📊 Sensor Monitoring System
+- ⚙️ Industry 4.0 Mini Project
+
+## 📫 Contact
+- Email: bakat@email.com
+- Instagram: @bakat.tech
