@@ -1,1 +1,618 @@
+#include <Arduino_BuiltIn.h>
 
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <Wire.h>
+#include <DHT.h>
+#include "SPI.h"
+#include "Adafruit_GFX.h"
+#include "Adafruit_ILI9341.h"
+
+#define RST_TRIG 16
+#define SOLENOID 22 
+#define PILOTLAMP 5
+#define LEDSTRIP 19
+#define OBSTACLE 34
+#define DHTPIN 17
+#define DHTTYPE DHT22
+#define delayStart 500
+
+
+// For the Adafruit shield, these are the default.
+#define TFT_DC 4
+#define TFT_CS 15
+#define TFT_RST 2  
+#define TFT_MISO 19         
+#define TFT_MOSI 23           
+#define TFT_CLK 18 
+
+String LockerNumber = "1";
+
+bool stats;
+bool state;
+bool restart;
+bool justopen;
+int codeopen;
+
+String APIHealt;
+String code;
+String timeleft;
+String duration;
+float t, h;
+String temp;
+String humi;
+bool valueobs;
+String Strobs;
+
+DHT dht(DHTPIN, DHTTYPE);
+
+
+// Use hardware SPI (on Uno, #13, #12, #11) and the above for CS/DC
+//Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC);
+// If using the breakout, change pins as desired
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_CLK, TFT_RST, TFT_MISO);
+const char* ssid = "Galaxy A55 5G 06CB";   // Replace with your WiFi SSID
+const char* password = "sekarhayu878";  // Replace with your WiFi password
+
+void setup() {
+  pinMode(SOLENOID, OUTPUT);
+  digitalWrite(SOLENOID, HIGH);
+  Serial.begin(115200);
+  pinMode(PILOTLAMP, OUTPUT);
+  pinMode(LEDSTRIP, OUTPUT);
+  pinMode(OBSTACLE, INPUT_PULLUP);  
+  delay(100);
+  dht.begin();
+  connectWifi();
+  Serial.begin(115200);
+  Serial.println("ILI9341 Test!"); 
+  
+ 
+  tft.begin();
+  tft.setRotation(3); // Adjust rotation as needed (0-3)
+  tft.fillScreen(ILI9341_WHITE);
+  tft.setTextColor(ILI9341_BLACK);
+  tft.setTextSize(2);
+  }
+
+  void connectWifi() {
+  WiFi.begin(ssid, password);
+  Serial.println("Connecting to WiFi");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi");
+}
+
+  // read diagnostics (optional but can help debug problems)
+  void loop() {
+  getCode();
+  readDHT();
+  readObs();
+
+  if (restart) {
+    return RST_DEVICE();
+  }
+
+  if (APIHealt == "No") {
+    lcdIdleError();
+  } else if (stats && state) {
+    lcdRentLocker();
+  } else if (stats && !state) {
+    lcdUnrentLocker();
+  } else {
+    if (state) {
+      if (justopen) {
+        solOpen();
+        if (codeopen == 1) {
+          lcdRentSuccess();
+        } else if (codeopen == 2) {
+          lcdOpenSuccess();
+        } else if (codeopen == 3) {
+          lcdUnrentSuccess();
+        }
+      } else {
+        solClose();
+        lcdIdleUnLock();
+        pilotGreen();
+      }
+    } else {
+      if (justopen) {
+        solOpen();
+        if (codeopen == 1) {
+          lcdRentSuccess();
+        } else if (codeopen == 2) {
+          lcdOpenSuccess();
+        } else if (codeopen == 3) {
+          lcdUnrentSuccess();
+        }
+      } else {
+        solClose();
+        lcdIdleLock();
+        pilotRed();
+      }
+    }
+  }
+
+  delay(1000);  // Wait before sending the next request
+}
+
+// Your other functions like getCode(), lcdIdleUnLock(), lcdIdleLock(), etc., remain unchanged
+
+void getCode() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+ 
+    // Lokasi URL API yang akan diminta
+    String url = "http://192.168.48.144:2045/api/lockerdb/" + LockerNumber;
+
+    Serial.print("Sending HTTP GET request to: ");
+    Serial.println(url);
+
+    // Menggunakan WiFiClient untuk memulai koneksi
+    WiFiClient client;
+    http.begin(client, url);
+
+    int httpCode = http.GET();
+    Serial.println(httpCode);
+    if (httpCode == 502) {
+      Serial.print("HTTP request failed with error code: ");
+      Serial.println(httpCode);
+      APIHealt = "No";
+    }
+    if (httpCode > 0) {
+      // Penerimaan respon berhasil
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        Serial.println("Response payload:");
+        Serial.println(payload);
+
+        // Parsing JSON
+        DynamicJsonDocument doc(1024);
+        deserializeJson(doc, payload);
+
+        // Mendapatkan nilai OnGoing.stats
+        stats = doc["OnGoing"]["stats"];
+        state = doc["state"];
+        restart = doc["NeedRestart"];
+        code = doc["OnGoing"]["code"].as<String>();
+        timeleft = doc["OnGoing"]["timeLeft"].as<String>();
+        duration = doc["OnGoing"]["duration"].as<String>();
+        justopen = doc["justOpen"];
+        codeopen = doc["codeOpen"].as<int>();
+        APIHealt = "Yes";
+      }
+    } else {
+      Serial.print("HTTP request failed with error code: ");
+      Serial.println(httpCode);
+      APIHealt = "No";
+    }
+
+    // Menutup koneksi
+    http.end();
+  }
+}
+
+void ApiPLGreen(String state) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+
+    // Lokasi URL API yang akan diminta
+      String url = "http://192.168.48.144:2045/api/system/locker/pl/green/" + LockerNumber + "/" + state;
+
+
+    Serial.print("Sending HTTP GET request to: ");
+    Serial.println(url);
+
+    // Menggunakan WiFiClient untuk memulai koneksi
+    WiFiClient client;
+    http.begin(client, url);
+
+    int httpCode = http.GET();
+    Serial.println(httpCode);
+    if (httpCode == 502) {
+      Serial.print("HTTP request failed with error code: ");
+      Serial.println(httpCode);
+      APIHealt = "No";
+    }
+    if (httpCode > 0) {
+      // Penerimaan respon berhasil
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        Serial.println("Response payload:");
+        Serial.println(payload);
+
+        // Parsing JSON
+        DynamicJsonDocument doc(1024);
+        deserializeJson(doc, payload);
+
+        // Mendapatkan nilai OnGoing.stats
+        APIHealt = "Yes";
+      }
+    } else {
+      Serial.print("HTTP request failed with error code: ");
+      Serial.println(httpCode);
+      APIHealt = "No";
+    }
+
+    // Menutup koneksi
+    http.end();
+  }
+}
+
+void ApiPLRed(String state) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+
+    // Lokasi URL API yang akan diminta
+    String url = "http://192.168.48.144:2045/api/system/locker/pl/red/" + LockerNumber + "/" + state;
+
+    Serial.print("Sending HTTP GET request to: ");
+    Serial.println(url);
+
+    // Menggunakan WiFiClient untuk memulai koneksi
+    WiFiClient client;
+    http.begin(client, url);
+
+    int httpCode = http.GET();
+    Serial.println(httpCode);
+    if (httpCode == 502) {
+      Serial.print("HTTP request failed with error code: ");
+      Serial.println(httpCode);
+      APIHealt = "No";
+    }
+    if (httpCode > 0) {
+      // Penerimaan respon berhasil
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        Serial.println("Response payload:");
+        Serial.println(payload);
+
+        // Parsing JSON
+        DynamicJsonDocument doc(1024);
+        deserializeJson(doc, payload);
+
+        // Mendapatkan nilai OnGoing.stats
+        APIHealt = "Yes";
+      }
+    } else {
+      Serial.print("HTTP request failed with error code: ");
+      Serial.println(httpCode);
+      APIHealt = "No";
+    }
+
+    // Menutup koneksi
+    http.end();
+  }
+}
+
+void ApiDHT(String tempe, String humid) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+
+    // Lokasi URL API yang akan diminta
+    String url = "http://192.168.48.144:2045/api/system/locker/dht/" + LockerNumber + "/" + tempe + "/" + humid;
+
+    Serial.print("Sending HTTP GET request to: ");
+    Serial.println(url);
+
+    // Menggunakan WiFiClient untuk memulai koneksi
+    WiFiClient client;
+    http.begin(client, url);
+
+    int httpCode = http.GET();
+    Serial.println(httpCode);
+    if (httpCode == 502) {
+      Serial.print("HTTP request failed with error code: ");
+      Serial.println(httpCode);
+      APIHealt = "No";
+    }
+    if (httpCode > 0) {
+      // Penerimaan respon berhasil
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        Serial.println("Response payload:");
+        Serial.println(payload);
+
+        // Parsing JSON
+        DynamicJsonDocument doc(1024);
+        deserializeJson(doc, payload);
+
+        // Mendapatkan nilai OnGoing.stats
+        APIHealt = "Yes";
+      }
+    } else {
+      Serial.print("HTTP request failed with error code: ");
+      Serial.println(httpCode);
+      APIHealt = "No";
+    }
+
+    // Menutup koneksi
+    http.end();
+  }
+}
+
+void ApiObs(String Strobs) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+
+    // Lokasi URL API yang akan diminta
+    String url = "http://192.168.48.144:2045/api/system/locker/obs/" + LockerNumber + "/" + Strobs;
+
+    Serial.print("Sending HTTP GET request to: ");
+    Serial.println(url);
+
+    // Menggunakan WiFiClient untuk memulai koneksi
+    WiFiClient client;
+    http.begin(client, url);
+
+    int httpCode = http.GET();
+    Serial.println(httpCode);
+    if (httpCode == 502) {
+      Serial.print("HTTP request failed with error code: ");
+      Serial.println(httpCode);
+      APIHealt = "No";
+    }
+    if (httpCode > 0) {
+      // Penerimaan respon berhasil
+      if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        Serial.println("Response payload:");
+        Serial.println(payload);
+
+        // Parsing JSON
+        DynamicJsonDocument doc(1024);
+        deserializeJson(doc, payload);
+
+        // Mendapatkan nilai OnGoing.stats
+        APIHealt = "Yes";
+      }
+    } else {
+      Serial.print("HTTP request failed with error code: ");
+      Serial.println(httpCode);
+      APIHealt = "No";  
+    }
+
+    // Menutup koneksi
+    http.end();
+  }
+}
+
+
+
+void lcdIdleUnLock() {
+      tft.fillScreen(ILI9341_BLUE);
+      tft.fillRect(10, 10, 300, 220, ILI9341_GREEN); // x, y, radius, color
+      tft.setTextColor(ILI9341_BLACK);
+      tft.setCursor(120, 100);
+      tft.println("LOCKIFY");
+      tft.setCursor(50, 120);
+      tft.println("Rent This Locker At:");
+      tft.setCursor(80, 140);
+      tft.println("NatSlock.site");
+      delay(2000);
+      tft.fillScreen(ILI9341_GREEN);
+      tft.fillRect(10, 10, 300, 220, ILI9341_BLUE); // x, y, radius, color
+      tft.setTextColor(ILI9341_WHITE);
+      tft.setCursor(120, 80);
+      tft.println("LOCKIFY");
+      tft.setCursor(90, 100);
+      tft.println("THIS LOCKER");
+      tft.setCursor(100, 120);
+      tft.println("AVAILABLE");
+      tft.setCursor(70, 140);
+      tft.println("NatSlock.site");
+      delay(2000);
+}
+
+
+void lcdIdleLock() {
+  tft.fillScreen(ILI9341_WHITE);
+  tft.setTextColor(ILI9341_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(120, 100);
+  tft.println("LOCKIFY");
+  tft.setCursor(50, 120);
+  tft.println("THIS LOCKER IS RENTED");
+  getCode();
+  tft.fillScreen(ILI9341_WHITE);
+  tft.setTextColor(ILI9341_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(120, 80);
+  tft.println("LOCKIFY");
+  tft.setCursor(50, 100);
+  tft.println("THIS LOCKER NOT AVAILABLE");
+  tft.setCursor(100, 120);
+  tft.println("Duration: " + duration);
+  tft.setCursor(60, 140);
+  tft.println(temp);
+  tft.setCursor(70, 140);
+  tft.println((char)223);
+  tft.setCursor(80, 140);
+  tft.println("C " + String(humi) + " %");
+}
+
+void lcdIdleError() {
+  tft.fillScreen(ILI9341_RED);
+  tft.setCursor(120, 100);  // Move the cursor at origin
+  tft.println("LOCKIFY");
+  tft.setCursor(50, 120);
+  tft.println("THIS LOCKER ERROR!");
+  tft.setCursor(80, 140);
+  tft.println("CONTACT ADMIN:"); //besok diisi nomer hp someone
+  tft.setCursor(100, 160);
+  tft.println("08xxxxx"); //besok diisi nomer hp someone
+}
+
+void lcdRentLocker() {  
+  tft.fillScreen(ILI9341_WHITE);
+  tft.setCursor(100, 80);  // Move the cursor at origin
+  tft.println("RENT LOCKER");
+  tft.setCursor(60, 100);
+  tft.println("Valid: " + timeleft + " Left");
+  tft.setCursor(50, 120);
+  tft.println("Please Enter Code:"); //harus masukin code di web i guest
+  if (code == "CANCELED") {
+    tft.setCursor(100, 140);
+    tft.println("--  " + code + "  --");
+  } else if (code.length() == 4) {
+    tft.setCursor(100, 140);
+    tft.println("--  " + code + "  --");
+  } else {
+    tft.setCursor(100, 140);
+    tft.println("--  " + code + "  --");
+  }
+}
+
+void lcdUnrentLocker() {
+  tft.fillScreen(ILI9341_WHITE);
+  if (code.length() == 2) {
+    tft.setCursor(100, 60);  // Move the cursor at origin
+    tft.println("OPEN LOCKER");
+  } else {
+    tft.setCursor(100, 60);  // Move the cursor at origin
+    tft.println("UNRENT LOCKER");
+  }
+
+  tft.setCursor(60, 80);
+  tft.println("Valid: " + timeleft + " Left");
+  tft.setCursor(50, 100);
+  tft.println("Please Enter Code:"); //masukin buat tidak nyewa
+
+  if (code == "CANCELED") {
+    tft.setCursor(100, 120);
+    tft.println("--  " + code + "  --");
+  } else if (code.length() == 4) {
+    tft.setCursor(100, 120);
+    tft.println("--  " + code + "  --");
+  } else {
+    tft.setCursor(100, 120);
+    tft.println("--  " + code + "  --");
+  }
+}
+
+void pilotGreen() {
+  digitalWrite(PILOTLAMP, HIGH);
+  ApiPLGreen("on");
+  ApiPLRed("off");
+}
+
+void pilotRed() {
+  digitalWrite(PILOTLAMP, LOW);
+  ApiPLGreen("off");
+  ApiPLRed("on");
+}
+
+void relayStartup() {
+  pilotGreen();
+  delay(delayStart);
+  pilotRed();
+  delay(delayStart);
+  pilotGreen();
+  delay(delayStart);
+  pilotRed();
+  delay(delayStart);
+  pilotGreen();
+  delay(delayStart);
+  pilotRed();
+  delay(delayStart);
+}
+
+void RST_DEVICE() {
+  tft.fillScreen(ILI9341_WHITE);
+  tft.setCursor(120, 80);  // Move the cursor at origin
+  tft.println("LOCKIFY");
+  tft.setCursor(80, 100);
+  tft.println("REMOTE NEED TO");
+  tft.setCursor(60, 120);
+  tft.println("THIS LOCKER RESET");
+  tft.setCursor(60, 140);
+  tft.println("Wait For Moment...");
+  pilotGreen();
+  delay(delayStart);
+  pilotRed();
+  delay(delayStart);
+  pilotGreen();
+  delay(delayStart);
+  pilotRed();
+  delay(delayStart);
+  pilotGreen();
+  delay(delayStart);
+  pilotRed();
+  delay(delayStart);
+  pinMode(RST_TRIG, OUTPUT);
+  digitalWrite(RST_TRIG, LOW);
+  delay(delayStart);
+  digitalWrite(RST_TRIG, HIGH);
+}
+
+void lcdRentSuccess() {
+  tft.fillScreen(ILI9341_WHITE);
+  tft.setCursor(80, 80);
+  tft.println("RENT SUCCESS");
+  tft.setCursor(60, 100);
+  tft.println("OPEN THIS LOCKER");
+  tft.setCursor(50, 120);
+  tft.println("Don't Forget To Close");
+}
+void lcdOpenSuccess() {
+  tft.fillScreen(ILI9341_WHITE);
+  tft.setCursor(80, 80);
+  tft.println("OPEN SUCCESS");
+  tft.setCursor(60, 100);
+  tft.println("OPEN THIS LOCKER");
+  tft.setCursor(50, 120);
+  tft.println("Don't Forget To Close");
+}
+
+void lcdUnrentSuccess() {
+  tft.fillScreen(ILI9341_WHITE);
+  tft.setCursor(80, 80);
+  tft.println("UNRENT SUCCESS");
+  tft.setCursor(60, 100);
+  tft.println("OPEN THIS LOCKER");
+  tft.setCursor(50, 120);
+  tft.println("Don't Forget To Close");
+}
+
+void readDHT() {
+  h = dht.readHumidity();
+  t = dht.readTemperature();
+  temp = String(t);
+  humi = String(h);
+
+  if (isnan(h) || isnan(t)) {
+    h = 0;
+    t = 0;
+    temp = String(t);
+    humi = String(h);
+    Serial.println("Failed to read from DHT sensor!");
+  }
+
+  ApiDHT(temp, humi);
+}
+
+void readObs() {
+  valueobs = digitalRead(OBSTACLE);
+  if (valueobs == 0) {
+    String Strobs = "0";
+    digitalWrite(LEDSTRIP, HIGH);
+    ApiObs(Strobs);
+  } else {
+    String Strobs = "1";
+    digitalWrite(LEDSTRIP, LOW);
+    ApiObs(Strobs);
+  }
+  //Serial.println(valueobs);
+}
+
+void solOpen() {
+  digitalWrite(SOLENOID, LOW);
+}
+
+void solClose() {
+  digitalWrite(SOLENOID, HIGH);
+}
