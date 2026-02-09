@@ -1,1 +1,76 @@
+#include <ThingerESP32.h>
+
+#define USERNAME  "bakat"
+#define DEVICE_ID "STUDYKASUSJOB2"
+#define DEVICE_CREDENTIAL "f&PlskVTtanZNS&J"
+
+#define WIFI_SSID "Wokwi-GUEST"
+#define WIFI_PASSWORD ""
+
+int sensor = 4;              
+int state = LOW;             
+int val = 0; 
+
+#include <DHT.h>
+
+#define DHTPIN 2
+#define DHTTYPE DHT22
+const int pinBuzzer = 14;
+
+DHT dht(DHTPIN, DHTTYPE);
+
+ThingerESP32 thing(USERNAME, DEVICE_ID, DEVICE_CREDENTIAL);
+float h = 0;
+float t = 0;
+
+void setup() {
+pinMode(sensor, INPUT); 
+pinMode(pinBuzzer, OUTPUT);
+Serial.begin(9600);
+  thing.add_wifi(WIFI_SSID, WIFI_PASSWORD);
+
+   thing["SUHU"] >> outputValue(t);
+   Serial.println("ESP32 Siap - Monitoring DHT ke Thinger.io");
+   thing["KELEMBAPAN"] >> outputValue(h);
+   Serial.println("ESP32 Siap - Monitoring DHT ke Thinger.io");
+}
+
+void loop() {
+val = digitalRead(sensor); 
+thing.handle();
+h = dht.readHumidity();
+t = dht.readTemperature();
+Serial.print("Suhu: ");
+Serial.println(t);
+Serial.print("Kelembapan: ");
+Serial.println(h);
+Serial.print("Status: ");
+Serial.println(val);
+
+
+if ( t >= 25 && val == HIGH ) {
+     digitalWrite(pinBuzzer, HIGH);
+     Serial.println("Gerakan Terdeteksi dan Suhu Panas ");
+  } else {
+    digitalWrite(pinBuzzer,LOW);
+    Serial.println("Tidak Terdeteksi gerakan dan suhu normal");
+  }
+ if (val == HIGH) {           
+    delay(100);                
+    if (state == LOW) {
+      Serial.println("Motion detected!"); 
+      state = HIGH;       
+    }
+  } 
+  else {
+      delay(200);             
+      if (state == HIGH){
+        Serial.println("Motion stopped!");
+        state = LOW;       
+    }
+  }
+  delay(2000);
+}
+
+
 
