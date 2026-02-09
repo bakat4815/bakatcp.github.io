@@ -1,0 +1,207 @@
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <DHT.h>
+
+// ------- Konfigurasi WiFi dan Firestore -------
+const char* ssid = "Narzo";
+const char* password = "123456789";
+const char* firestoreHost = "https://firestore.googleapis.com/v1/projects/sghj-dc78b/databases/(default)/documents/";
+const char* apiKey = "AIzaSyB5Wck_Uux3u2e57hW8CyVRyviO0hRrCjQ";
+
+// ------- Konfigurasi Sensor DHT -------
+#define DHTPIN 4
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
+
+// ------- Konfigurasi Sensor Flame -------
+#define flamePin 34      // Pin sensor Flame
+#define buzzerPin 32     // Pin untuk buzzer
+
+// ------- Konfigurasi pin rx tx -------
+#define RXp2 16 // Pin Rx ESP32
+#define TXp2 17 // Pin Tx ESP32
+
+// ------- Variabel Interval Waktu -------
+unsigned long previousDHTMillis = 0;
+unsigned long previousFirestoreMillis = 0;
+unsigned long previousFlameMillis = 0;
+unsigned long previousValueMillis = 0;
+const long dhtInterval = 2000;
+const long firestoreInterval = 2000;
+const long flameInterval = 2000;
+const long valueInterval = 2000;
+
+// ------- Variabel untuk Menyimpan Data -------
+float lastTemperature = 0.0;
+float lastHumidity = 0.0;
+bool flameDetected = true;
+int firestoreValue = 0;
+
+void setup() {
+  Serial.begin(115200);
+   Serial2.begin(115200, SERIAL_8N1, RXp2, TXp2); // Inisialisasi Serial2 untuk komunikasi dengan Arduino Mega
+
+  // Inisialisasi Sensor DHT
+  dht.begin();
+  Serial.println("Menghubungkan ke DHT22...");
+
+  // Menghubungkan ke WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Menghubungkan ke WiFi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("Terhubung ke WiFi!");
+
+  // Atur pin sensor Flame dan buzzer
+  pinMode(flamePin, INPUT);
+  pinMode(buzzerPin, OUTPUT); // Set buzzerPin sebagai OUTPUT
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - previousDHTMillis >= dhtInterval) {
+    previousDHTMillis = currentMillis;
+    readDHTData();
+  }
+
+  if (currentMillis - previousFirestoreMillis >= firestoreInterval) {
+    previousFirestoreMillis = currentMillis;
+    sendDataToFirestore();
+  }
+
+  if (currentMillis - previousFlameMillis >= flameInterval) {
+    previousFlameMillis = currentMillis;
+    checkFlameSensor();
+  }
+
+  if (currentMillis - previousValueMillis >= valueInterval) {
+    previousValueMillis = currentMillis;
+    getValueFromFirestore();
+  }
+
+  // Menerima nilai dari Arduino Mega
+  if (Serial2.available()) {
+    String valueFromMega = Serial2.readStringUntil('\n');
+    Serial.println("Data diterima dari Arduino Mega: " + valueFromMega);
+  }
+}
+
+void readDHTData() {
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
+
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("Gagal membaca dari sensor DHT. Menggunakan data terakhir...");
+  } else {
+    lastTemperature = temperature;
+    lastHumidity = humidity;
+  }
+
+  Serial.print("Suhu: ");
+  Serial.print(lastTemperature);
+  Serial.print(" °C | Kelembapan: ");
+  Serial.print(lastHumidity);
+  Serial.println(" %");
+
+  // Kirim data ke Arduino Mega
+  Serial2.print("Temperature: ");
+  Serial2.print(lastTemperature);
+  Serial2.print(" Humidity: ");
+  Serial2.println(lastHumidity);
+}
+
+void sendDataToFirestore() {
+  if (WiFi.status() == WL_CONNECTED) {
+    checkFlameSensor();
+    HTTPClient http;
+    String firestoreUrl = String(firestoreHost) + "sensor_data/sensor_1?key=" + apiKey;
+
+    String payload = createFirestorePayload();
+    http.begin(firestoreUrl);
+    http.addHeader("Content-Type", "application/json");
+    int responseCode = http.PATCH(payload);
+c:\Users\ASUS\Documents\web programing\Jobsheet 2_Button.docx
+    if (responseCode == 200) {
+      Serial.println("Data berhasil dikirim ke Firestore.");
+    } else {
+      Serial.printf("Gagal mengirim data ke Firestore, kode: %d\n", responseCode);
+    }
+
+    http.end();
+  } else {
+    Serial.println("WiFi tidak terhubung!");
+  }
+}
+
+String createFirestorePayload() {
+  DynamicJsonDocument doc(1024);
+  doc["fields"]["temperature"]["doubleValue"] = lastTemperature;
+  doc["fields"]["humidity"]["doubleValue"] = lastHumidity;
+  doc["fields"]["flame_detected"]["booleanValue"] = flameDetected;
+
+  String jsonString;
+  serializeJson(doc, jsonString);
+  return jsonString;
+}
+
+void checkFlameSensor() {
+  int stableRead = 0;
+  
+  for (int i = 0; i < 5; i++) {
+    int flameValue = digitalRead(flamePin);
+    if (flameValue == HIGH) {
+      stableRead++;
+    }
+    delay(10);
+  }
+
+  flameDetected = (stableRead >= 3);
+
+  if (!flameDetected) { 
+    Serial.println("Api terdeteksi!");
+    digitalWrite(buzzerPin, HIGH);
+  } else {
+    Serial.println("Tidak ada api.");
+    digitalWrite(buzzerPin, LOW);
+  }
+}
+
+void getValueFromFirestore() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String firestoreUrl = String(firestoreHost) + "data/robot?key=" + apiKey;
+
+    http.begin(firestoreUrl);
+    int responseCode = http.GET();
+
+    if (responseCode == 200) {
+      String responseBody = http.getString();
+      Serial.println("Data diambil dari Firestore: " + responseBody);
+
+      DynamicJsonDocument doc(2048);
+      deserializeJson(doc, responseBody);
+
+      // Ambil nilai dari field Firestore yang sesuai
+      if (doc.containsKey("fields") && doc["fields"].containsKey("value")) {
+        firestoreValue = doc["fields"]["value"]["integerValue"].as<int>();
+        Serial.printf("Nilai value dari Firestore: %d\n", firestoreValue);
+
+        // Kirim value ke Arduino Mega
+        Serial2.println(firestoreValue);
+      } else {
+        Serial.println("Field value tidak ditemukan di dokumen Firestore.");
+      }
+    } else {
+      Serial.printf("Gagal mengambil data dari Firestore, kode: %d\n", responseCode);
+    }
+
+    http.end();
+  } else {
+    Serial.println("WiFi tidak terhubung!");
+  }
+}
